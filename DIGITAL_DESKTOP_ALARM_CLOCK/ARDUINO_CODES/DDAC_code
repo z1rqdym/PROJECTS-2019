@@ -1,0 +1,582 @@
+#include <EEPROM.h>
+#include <Wire.h>
+#include <RealTimeClockDS1307.h>
+
+uint8_t DATA595=2;
+uint8_t LATCH595=3;
+uint8_t CLOCK595=4;
+
+uint8_t digitSel[4]={5,6,7,8};
+
+uint8_t SELECT=9;
+uint8_t RIGHT=10;
+uint8_t LEFT=11;
+uint8_t DOWN=12;
+uint8_t UP=13;
+
+uint8_t BUZ=16;
+
+uint8_t LM35=A3;
+
+uint8_t sub=0;
+
+int minSET, hrSET;
+int minAL, hrAL;
+int hrD, minD, secD;
+
+uint8_t clockSET=0, alarmSET=0;
+
+uint8_t digits[4];
+uint8_t Display=2; // changeable
+
+int secL, secC=0;
+
+unsigned long pMillis = 0;  
+unsigned long cMillis;
+unsigned long interval=100; 
+
+// logic "|DOT" with any characteron char_table[] you want to use with dot.
+// example // int digit1=char_table[2]|DOT;
+uint8_t DOT=0x01; 
+
+// character table for 7 Segment Common Cathode Displays
+uint8_t char_table[23]=
+{
+  0xFC,  // 0  D
+  0x60,  // 1
+  0xDA,  // 2
+  0xF2,  // 3
+  0x66,  // 4  Y
+  0xB6,  // 5  S
+  0xBE,  // 6
+  0xE0,  // 7
+  0xFE,  // 8  B
+  0xF6,  // 9
+  0x00,  // 10 blank
+  0xEE,  // 11 A
+  0x9C,  // 12 C
+  0x9E,  // 13 E
+  0x8E,  // 14 F
+  0xC6,  // 15 °
+  0x02,  // 16 -
+  0x01,  // 17 .
+  0x1C,  // 18 L
+  0xBC,  // 19 G
+  0x6E,  // 20 H
+  0xCE,  // 21 P
+  0x7C   // 22 U
+};
+
+void write74HC595();
+
+uint8_t readLM35()
+{
+  float value=analogRead(LM35); // read analog value
+  uint8_t tempC=(value/1023)*500; // convert to Celsius in integer value
+  if(tempC>=100)
+  {
+    tempC=99;
+  }
+  else if(tempC<0)
+  {
+    tempC=0;
+  }
+  return tempC; 
+}
+
+void getDigits()
+{
+  
+  if(Display==0)
+  {
+    RTC.readClock();
+    hrD=RTC.getHours();
+    minD=RTC.getMinutes();
+    secD=RTC.getSeconds();
+    digits[0]=char_table[(hrD-(hrD%10))/10];
+    if(secD!=secL)
+    {
+      secL=secD;
+      secC++;
+      if(secC>=3)
+      {
+        secC=0;
+      }
+      if(secC==1)
+      {
+        digits[1]=char_table[hrD%10];
+      }
+      else if(secC==2)
+      {
+        secC=0;
+        digits[1]=char_table[hrD%10]|DOT;
+      }
+    }
+    digits[2]=char_table[(minD-(minD%10))/10];
+    digits[3]=char_table[minD%10];
+  }
+  if(Display==1)
+  {
+    uint8_t buf=readLM35();
+    digits[0]=char_table[(buf-(buf%10))/10];
+    digits[1]=char_table[buf%10];
+    digits[2]=char_table[15];
+    digits[3]=char_table[12];
+  }
+  if(Display==2)
+  {
+    cMillis = millis();
+    if((cMillis-pMillis)>=interval)
+    {
+      pMillis=cMillis;
+      sub++;
+    }
+    if(sub==0)
+    {
+      digits[0]=char_table[16];
+      digits[1]=char_table[16];
+      digits[2]=char_table[16];
+      digits[3]=char_table[16];
+    }
+    else if(sub==2)
+    {
+      digits[0]=char_table[16]|DOT;
+      digits[1]=char_table[16];
+      digits[2]=char_table[16];
+      digits[3]=char_table[16];
+    }
+    else if(sub==3)
+    {
+      digits[0]=char_table[16]|DOT;
+      digits[1]=char_table[16]|DOT;
+      digits[2]=char_table[16];
+      digits[3]=char_table[16];
+    }
+    else if(sub==4)
+    {
+      digits[0]=char_table[16]|DOT;
+      digits[1]=char_table[16]|DOT;
+      digits[2]=char_table[16]|DOT;
+      digits[3]=char_table[16];
+    }
+    else if(sub==5)
+    {
+      digits[0]=char_table[16]|DOT;
+      digits[1]=char_table[16]|DOT;
+      digits[2]=char_table[16]|DOT;
+      digits[3]=char_table[16]|DOT;
+    }
+    else if(sub==6)
+    {
+      while(digitalRead(SELECT)==LOW)
+      {
+        if(sub==6)
+        {
+          digits[0]=char_table[5];
+          digits[1]=char_table[11]|DOT;
+          digits[2]=char_table[16];
+          digits[3]=char_table[16];
+        }
+        else if(sub==7)
+        {
+          digits[0]=char_table[16];
+          digits[1]=char_table[16];
+          digits[2]=char_table[11];
+          digits[3]=char_table[18]|DOT;
+        }
+        if(digitalRead(RIGHT)==HIGH)
+        {
+          sub++;
+          if(sub>7)
+          {
+            sub=7;
+            digits[0]=char_table[16];
+            digits[1]=char_table[16];
+            digits[2]=char_table[11];
+            digits[3]=char_table[18]|DOT;
+          }
+          while(digitalRead(RIGHT)==HIGH)
+          {
+            write74HC595();
+            if(digitalRead(SELECT)==HIGH)
+            {
+              while(digitalRead(SELECT)==HIGH)
+              {
+                write74HC595();
+              }
+              alarmSET=1;
+              sub=10;
+              break;
+            }
+            else
+            {
+              alarmSET=0;
+              sub=7;
+            }
+          }
+          if(alarmSET==1)
+          {
+            while(digitalRead(RIGHT)==HIGH)
+            {
+              write74HC595();
+            }
+            break;
+          }
+        }
+        if(digitalRead(LEFT)==HIGH)
+        {
+          sub--;
+          if(sub<6)
+          {
+            sub=6;
+            digits[0]=char_table[5];
+            digits[1]=char_table[11]|DOT;
+            digits[2]=char_table[16];
+            digits[3]=char_table[16];
+          }
+          while(digitalRead(LEFT)==HIGH)
+          {
+            write74HC595();
+            if(digitalRead(SELECT)==HIGH)
+            {
+              while(digitalRead(SELECT)==HIGH)
+              {
+                write74HC595();
+              }
+              clockSET=1;
+              sub=8;
+              break;
+            }
+            else
+            {
+              clockSET=0;
+              sub=6;
+            }
+          }
+          if(clockSET==1)
+          {
+            while(digitalRead(LEFT)==HIGH)
+            {
+              write74HC595();
+            }
+            break;
+          }
+        }
+        write74HC595();
+      }
+      if(clockSET==1)
+      {
+        minSET=minD;
+        hrSET=hrD;
+        while(sub!=0)
+        {
+          if(sub==8)
+          {
+            digits[0]=char_table[(hrSET-(hrSET%10))/10];
+            digits[1]=char_table[(hrSET%10)];
+            digits[2]=char_table[16];
+            digits[3]=char_table[16];
+            write74HC595();
+          }
+          else if(sub==9)
+          {
+            digits[0]=char_table[16];
+            digits[1]=char_table[16];
+            digits[2]=char_table[(minSET-(minSET%10))/10];
+            digits[3]=char_table[(minSET%10)];
+            write74HC595();
+          }
+          if((sub==8)&&(digitalRead(UP)))
+          {
+            while(digitalRead(UP)==HIGH)
+            {
+              write74HC595();
+            }
+            hrSET++;
+            if(hrSET>23)
+            {
+              hrSET=0;
+            }
+            RTC.setHours(hrSET);
+            RTC.setSeconds(0);
+            RTC.setClock();
+            digits[0]=char_table[(hrSET-(hrSET%10))/10];
+            digits[1]=char_table[(hrSET%10)];
+            digits[2]=char_table[16];
+            digits[3]=char_table[16];
+          }
+          if((sub==8)&&(digitalRead(DOWN)))
+          {
+            while(digitalRead(DOWN)==HIGH)
+            {
+              write74HC595();
+            }
+            hrSET--;
+            if(hrSET<0)
+            {
+              hrSET=23;
+            }
+            RTC.setHours(hrSET);
+            RTC.setSeconds(0);
+            RTC.setClock();
+            digits[0]=char_table[(hrSET-(hrSET%10))/10];
+            digits[1]=char_table[(hrSET%10)];
+            digits[2]=char_table[16];
+            digits[3]=char_table[16];
+          }
+          if((sub==9)&&(digitalRead(UP)))
+          {
+            while(digitalRead(UP)==HIGH)
+            {
+              write74HC595();
+            }
+            minSET++;
+            if(minSET>59)
+            {
+              minSET=0;
+            }
+            RTC.setMinutes(minSET);
+            RTC.setSeconds(0);
+            RTC.setClock();
+            digits[0]=char_table[16];
+            digits[1]=char_table[16];
+            digits[2]=char_table[(minSET-(minSET%10))/10];
+            digits[3]=char_table[(minSET%10)];
+          }
+          if((sub==9)&&(digitalRead(DOWN)))
+          {
+            while(digitalRead(DOWN)==HIGH)
+            {
+              write74HC595();
+            }
+            minSET--;
+            if(minSET<0)
+            {
+              minSET=59;
+            }
+            RTC.setMinutes(minSET);
+            RTC.setSeconds(0);
+            RTC.setClock();
+            digits[0]=char_table[16];
+            digits[1]=char_table[16];
+            digits[2]=char_table[(minSET-(minSET%10))/10];
+            digits[3]=char_table[(minSET%10)];
+          }
+          if(digitalRead(RIGHT)==HIGH)
+          {
+            while(digitalRead(RIGHT)==HIGH)
+            {
+              write74HC595();
+            }
+            sub++;
+            if(sub>9)
+            {
+              sub=9;
+            }
+          }
+          if(digitalRead(LEFT)==HIGH)
+          {
+            while(digitalRead(LEFT)==HIGH)
+            {
+              write74HC595();
+            }
+            sub--;
+            if(sub<8)
+            {
+              sub=8;
+            }
+          }
+          if(digitalRead(SELECT)==HIGH)
+          {
+            clockSET=0;
+            alarmSET=0;
+            sub=0;
+          }
+        }
+      }
+      else if(alarmSET==1) //////////////////////////////////
+      {
+        hrAL=EEPROM.read(0);
+        minAL=EEPROM.read(1);
+        while(sub!=0)
+        {
+          if(sub==10)
+          {
+            digits[0]=char_table[(hrAL-(hrAL%10))/10];
+            digits[1]=char_table[(hrAL%10)];
+            digits[2]=char_table[16];
+            digits[3]=char_table[16];
+            write74HC595();
+          }
+          else if(sub==11)
+          {
+            digits[0]=char_table[16];
+            digits[1]=char_table[16];
+            digits[2]=char_table[(minAL-(minAL%10))/10];
+            digits[3]=char_table[(minAL%10)];
+            write74HC595();
+          }
+          if((sub==10)&&(digitalRead(UP)))
+          {
+            while(digitalRead(UP)==HIGH)
+            {
+              write74HC595();
+            }
+            hrAL++;
+            if(hrAL>23)
+            {
+              hrAL=0;
+            }
+            digits[0]=char_table[(hrAL-(hrAL%10))/10];
+            digits[1]=char_table[(hrAL%10)];
+            digits[2]=char_table[16];
+            digits[3]=char_table[16];
+          }
+          if((sub==10)&&(digitalRead(DOWN)))
+          {
+            while(digitalRead(DOWN)==HIGH)
+            {
+              write74HC595();
+            }
+            hrAL--;
+            if(hrAL<0)
+            {
+              hrAL=23;
+            }
+            digits[0]=char_table[(hrAL-(hrAL%10))/10];
+            digits[1]=char_table[(hrAL%10)];
+            digits[2]=char_table[16];
+            digits[3]=char_table[16];
+          }
+          if((sub==11)&&(digitalRead(UP)))
+          {
+            while(digitalRead(UP)==HIGH)
+            {
+              write74HC595();
+            }
+            minAL++;
+            if(minAL>59)
+            {
+              minAL=0;
+            }
+            digits[0]=char_table[16];
+            digits[1]=char_table[16];
+            digits[2]=char_table[(minAL-(minAL%10))/10];
+            digits[3]=char_table[(minAL%10)];
+          }
+          if((sub==11)&&(digitalRead(DOWN)))
+          {
+            while(digitalRead(DOWN)==HIGH)
+            {
+              write74HC595();
+            }
+            minAL--;
+            if(minAL<0)
+            {
+              minAL=59;
+            }
+            digits[0]=char_table[16];
+            digits[1]=char_table[16];
+            digits[2]=char_table[(minAL-(minAL%10))/10];
+            digits[3]=char_table[(minAL%10)];
+          }
+          if(digitalRead(RIGHT)==HIGH)
+          {
+            while(digitalRead(RIGHT)==HIGH)
+            {
+              write74HC595();
+            }
+            sub++;
+            if(sub>11)
+            {
+              sub=11;
+            }
+          }
+          if(digitalRead(LEFT)==HIGH)
+          {
+            while(digitalRead(LEFT)==HIGH)
+            {
+              write74HC595();
+            }
+            sub--;
+            if(sub<10)
+            {
+              sub=10;
+            }
+          }
+          if(digitalRead(SELECT)==HIGH)
+          {
+            EEPROM.write(0,hrAL);
+            EEPROM.write(1,minAL);
+            clockSET=0;
+            alarmSET=0;
+            sub=0;
+          }
+        }
+      }
+      sub=0;
+    }
+  }
+  write74HC595();
+}
+
+void write74HC595()
+{
+  for(uint8_t i=0;i<4;i++)
+  {
+    for(uint8_t k=0;k<8;k++)
+    {
+      digitalWrite(DATA595, bitRead(digits[(3-i)],k));
+      digitalWrite(CLOCK595,HIGH);
+      digitalWrite(CLOCK595,LOW);
+      digitalWrite(LATCH595,HIGH);
+      digitalWrite(LATCH595,LOW);
+    }
+    digitalWrite(digitSel[(3-i)], HIGH);
+    delayMicroseconds(1000);
+    digitalWrite(digitSel[(3-i)],  LOW);
+    digitalWrite(CLOCK595,HIGH);
+    digitalWrite(CLOCK595,LOW);
+    digitalWrite(LATCH595,HIGH);
+    digitalWrite(LATCH595,LOW);
+  }
+}
+
+void setup() 
+{
+  Serial.begin(9600);
+  RTC.start();
+  RTC.readClock();
+  hrD=RTC.getHours();
+  minD=RTC.getMinutes();
+  secD=RTC.getSeconds();
+  for(uint8_t i=2;i<9;i++)
+  {
+    pinMode(i, OUTPUT);
+  }
+  for(uint8_t i=9;i<14;i++)
+  {
+    pinMode(i, INPUT);
+  }
+  pinMode(BUZ, OUTPUT);
+  
+  delay(200);
+  Serial.println("DS1307RTC Read Test");
+}
+
+void loop() 
+{
+  if(digitalRead(SELECT)==HIGH)
+  {
+    while(digitalRead(SELECT)==HIGH)
+    {
+      write74HC595();
+    }
+    Display++;
+    if(Display>2)
+    {
+      Display=0;
+    }
+  }
+  getDigits(); 
+}
